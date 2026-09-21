@@ -37,13 +37,13 @@ CS396H processes queued vendor export transactions (VNDEXPQ/VNDEXPH/VNDEXPD) to 
 
 ### 1.2 Key Enhancement - Revision PK-L
 
-Everything below was implemented, reviewed, and approved as a single consolidated revision, `PK-L` (ported/adapted from CS396A's reference implementation, tags `MR-D`/`PK-J`/`PK-K`):
+The following is the approved, current behavior of the program under revision `PK-L`:
 
-1. **EDD_Override_SR (OMS-2243)**: New subroutine that checks `isWarehouseEpicEnabled(Wk_House : IsWhseEnabled : EnablementMode)`. Only `EnablementMode = 'L'` (Live) is treated as Epic-enabled; blank/Compare mode falls back to `IsWhseEnabled='N'` (legacy flow). When enabled, loops `OrdItemsCsr` over `CODATAN`, builds `ItemOverridesDS`/`LineItemSeqArr`, calls `PopulateEDDTables` then `InvokeEPICEDDAPI`, and captures the result in `EDDProcResponse.ProcessStatus`.
+1. **EDD_Override_SR (OMS-2243)**: Checks `isWarehouseEpicEnabled(Wk_House : IsWhseEnabled : EnablementMode)`. Only `EnablementMode = 'L'` (Live) is treated as Epic-enabled; blank/Compare mode is treated as `IsWhseEnabled='N'` (legacy flow). When enabled, loops `OrdItemsCsr` over `CODATAN`, builds `ItemOverridesDS`/`LineItemSeqArr`, calls `PopulateEDDTables` then `InvokeEPICEDDAPI`, and captures the result in `EDDProcResponse.ProcessStatus`.
 
-2. **Upd_Dates_Sr (OMS-2246, renamed from the earlier `Abc_Sr` working name)**: Adds `Wk_RqsDat` (Packed 8:0) and pulls the `ExtOrd.RqsDat` vs `vedShpDt` comparison out of the `Hld_Order` (order-level) guard so it runs once **per line item** instead of only for the first item of the transaction (mirrors the same fix applied in CS396A). Uses `%DATE(%Char(Wk_RqsDat):*ISO0)` since `ExtOrd.RqsDat` is CCYYMMDD packed numeric.
+2. **Upd_Dates_Sr (OMS-2246)**: Uses `Wk_RqsDat` (Packed 8:0) to compare `ExtOrd.RqsDat` against `vedShpDt` **per line item** (every item of the order is checked independently). Uses `%DATE(%Char(Wk_RqsDat):*ISO0)` since `ExtOrd.RqsDat` is CCYYMMDD packed numeric.
 
-3. **Requeue fix in `Process_Rcds`**: On genuine EPIC failure (`IsWhseEnabled='Y'` and `EDDProcResponse.ProcessStatus <> 'PASS'`), sets `Continue_Flg = 'N'`. Without this, `Continue_Flg` stayed `'Y'` and the outer driver archived/deleted `VNDEXPQR` right after `Process_Rcds`, wiping out the intended `'Q'` (requeue) status. Guarded to `IsWhseEnabled='Y'` only, so the non-EPIC warehouse flow (`ExSr Upd_Dates_Sr` still runs directly) is not disturbed. **Note:** `Build_Log_Flg` is intentionally left unchanged by this fix - see Section 5.
+3. **Requeue handling in `Process_Rcds`**: On EPIC failure (`IsWhseEnabled='Y'` and `EDDProcResponse.ProcessStatus <> 'PASS'`), `Continue_Flg` is set to `'N'`. This ensures the outer driver requeues the record (`veqSts='Q'`) instead of archiving/deleting it. `Build_Log_Flg` is not affected by this - see Section 5.
 
 ---
 
@@ -64,7 +64,7 @@ graph TD
     H -->|Y| J[Loop OrdItemsCsr, build ItemOverridesDS, PopulateEDDTables, InvokeEPICEDDAPI]
     J --> K{ProcessStatus = PASS?}
     K -->|YES| L[ExSr Upd_Dates_Sr - apply EPIC-confirmed dates]
-    K -->|NO - PK-L requeue fix| M[Continue_Flg=N]
+    K -->|NO| M[Continue_Flg=N]
     I --> N{Outer: Continue_Flg = Y?}
     L --> N
     M --> N
@@ -88,8 +88,7 @@ graph TD
 ```
 Loop CoDatNA1 by (copCusOrdN : vedItmNo)
   Save WK_VedShpDt = vedShpDt
-  PK-L: Chain(n) ExtOrd by copCusOrdN; If RqsDat > vedShpDt (as *ISO0), bump vedShpDt = RqsDat
-        (runs every item - NOT gated by Hld_Order)
+  Chain(n) ExtOrd by copCusOrdN; If RqsDat > vedShpDt (as *ISO0), bump vedShpDt = RqsDat
   If Hld_Order <> copCusOrdN (first item of order only): update CoMast (CO_RqDte/CO_MSDte)
   Update CoDataCN / EXTORIT with corrected date
 ```
@@ -136,22 +135,21 @@ This subroutine runs in **both** flows: directly when `IsWhseEnabled='N'` (legac
 
 ### 4.2 Distinguishing EPIC-Fail Requeue vs Hard Error
 
-- **EPIC-fail requeue (PK-L):** `IsWhseEnabled='Y'`, `EDDProcResponse.ProcessStatus <> 'PASS'`. `veqSts='Q'`, `Continue_Flg='N'`. `Build_Log_Flg` is left as-is (normally `'Y'`), so `Bld_TrnsLog` still fires for this failed attempt - see Section 5.
-- **Hard error:** `Hard_Err_Flg` set in `Valid_SR` (missing/invalid VNDEXPH, COMAST, or COPOMST record). `veqSts='E'`. Will not requeue automatically; needs data-correction or dev review.
+- **EPIC-fail requeue:** `IsWhseEnabled='Y'`, `EDDProcResponse.ProcessStatus <> 'PASS'`. Result: `veqSts='Q'`, `Continue_Flg='N'`, and a transaction log entry is still written for this attempt (`Bld_TrnsLog` fires).
+- **Hard error:** `Hard_Err_Flg` set in `Valid_SR` (missing/invalid VNDEXPH, COMAST, or COPOMST record). Result: `veqSts='E'`. Will not requeue automatically; needs data-correction or dev review.
 
 ---
 
-## 5. REPROCESSING / RETRY BEHAVIOR (PK-L)
+## 5. REPROCESSING / RETRY BEHAVIOR
 
 ### 5.1 On EPIC FAIL
-- `Continue_Flg` is forced to `'N'` only for `IsWhseEnabled='Y'` AND `ProcessStatus <> 'PASS'`. Without this, `Continue_Flg` stayed `'Y'` and the outer driver archived/deleted `VNDEXPQR` immediately after `Process_Rcds`, silently losing the failed transaction instead of requeuing it.
-- `Build_Log_Flg` is **not** modified by this fix - it is still whatever was set before `ExSR Process_Rcds` (normally `'Y'`). So the outer driver's `Else` branch (`veqSts='Q'`; `Update VNDEXPQR`) still runs `Bld_TrnsLog` for this failed attempt, i.e. **the failed attempt IS logged**.
-- Non-EPIC orders (`IsWhseEnabled='N'`) are unaffected - they run `Upd_Dates_Sr` directly and never touch `Continue_Flg` in this branch.
+- `IsWhseEnabled='Y'` and `ProcessStatus <> 'PASS'` → `Continue_Flg='N'` → record is requeued (`veqSts='Q'`, `Update VNDEXPQR`) and a transaction log entry is written for this attempt.
+- Non-EPIC orders (`IsWhseEnabled='N'`) run `Upd_Dates_Sr` directly and are not affected by this logic.
 
 ### 5.2 On Retry After a Prior EPIC FAIL
-- `Continue_Flg` is a transient working variable re-derived fresh every run (`Valid_SR` sets it back to `'Y'`); a prior failed pass has no effect on the next pass.
-- If the retry succeeds (`ProcessStatus='PASS'`), `Upd_Dates_Sr` runs, `Continue_Flg` stays `'Y'` - the outer driver takes the success branch: `Bld_TrnsLog` (log fires again), `Wrt_ArchiveQ`, `Delete VNDEXPQR`.
-- **Net effect:** because `Build_Log_Flg` is untouched, **every** attempt (failed or successful) produces a transaction log entry - one log entry per pass through `Process_Rcds`, not just the final successful one. This is different from suppressing logs on failure; confirm with the business/reviewer whether duplicate log entries per retry are acceptable, since each failed EPIC attempt on the same VNDEXPQ row will log again on every job run until it eventually passes.
+- Each run of `Process_Rcds` re-evaluates the order independently.
+- If the retry succeeds (`ProcessStatus='PASS'`), `Upd_Dates_Sr` runs, `Continue_Flg` stays `'Y'`, and the outer driver logs, archives, and deletes the record as normal.
+- **Support note:** a transaction log entry is written on every pass through `Process_Rcds` - both failed and successful attempts. So for an order that fails EPIC multiple times before succeeding, expect multiple log entries for that order (one per attempt), not just one for the final success.
 
 ---
 
@@ -175,7 +173,7 @@ Use the CS448J support hand-off (Section 5, Evidence Query) against `EDDREQHDR` 
 ## 7. PROGRAM DEPENDENCIES
 
 **Related/Reference Programs:**
-- `CS396A` - Original vendor export program with the reference implementation (tags MR-D, PK-J, PK-K) that CS396H's consolidated `PK-L` changes were ported from.
+- `CS396A` - Original vendor export program with the reference EPIC EDD override implementation.
 - `CS448H` - EpicEnabledWarehouseList / `isWarehouseEpicEnabled` check.
 - `CS448J` - EDD Service Health Monitor (see separate hand-off document) - use for confirming genuine EPIC API outages.
 
