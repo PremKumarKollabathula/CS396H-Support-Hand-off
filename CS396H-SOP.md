@@ -188,7 +188,7 @@ Use the CS448J support hand-off (Section 5, Evidence Query) against `EDDREQHDR` 
 **Key Tables:**
 - `VNDEXPQ` / `VNDEXPH` / `VNDEXPD` - Vendor export queue, header, detail.
 - `COMAST` / `CODATAN` / `EXTORIT` / `EXTORD` - Order master and item-level date fields.
-- 'AINVCTL' / 'INVDTL' / 'INVPREC' - Auto-invoice control/detail/price records.
+- `AINVCTL` / `INVDTL` / `INVPREC` - Auto-invoice control/detail/price records.
 
 ---
 
