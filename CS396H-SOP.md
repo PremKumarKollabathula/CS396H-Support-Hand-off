@@ -7,17 +7,17 @@
 
 | Field | Details |
 |-------|---------|
-| **Project Name** | CS396H - Vendor Export Auto Invoicing (EPIC EDD Override for 3PDS Vendors) |
-| **Change Request** | Task 3071 - 3PDS Vendors / EDD Override for Epic-Enabled Warehouses |
-| **Jira ID** | OMS-2246 (parent EDD override integration: OMS-2243) |
-| **Revision Level Covered** | PK-L (single consolidated revision - approved via code review) |
+| **Project Name** | EPIC - EDD Reservation/Allocation - Build Vendor Export Auto Invoicing Records - CS396H |
+| **Change Request** | CHG0053973 |
+| **Jira ID** | OMS-2246 (EPIC - EDD Reservation/Allocation - Build Vendor Export Auto Invoicing Records - CS396H) |
+| **Revision Level Covered** | PK-L (Approved via code review) |
 | **Related Program** | CS396A (original/reference implementation) |
 | **Developed by** | Prem Kumar K |
 | **Date Created** | 09/15/2026 |
-| **Support Hand-Off Date** | [Fill in] |
+| **Support Hand-Off Date** | 09.22.2026 |
 | **Document Version** | 1.0 |
 | **Support Team** | Order Management - Primary Support |
-| **Escalation Team** | IBM i Development Team / Nextuple EDD API Team |
+| **Escalation Team** | Order Management / Nextuple EDD API Team |
 
 ---
 
