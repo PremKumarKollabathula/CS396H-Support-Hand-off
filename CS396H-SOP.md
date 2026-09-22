@@ -192,22 +192,7 @@ Use the CS448J support hand-off (Section 5, Evidence Query) against `EDDREQHDR` 
 
 ---
 
-## 8. CONTACT INFORMATION
-
-| Level | Team | Contact | Response SLA |
-|:------|:-----|:--------|:-------------|
-| **L1** | Order Management Support | [Support email/queue] | 30 min (P2) |
-| **L2** | Nextuple EDD API Team | [Nextuple support contact] | 1 hour (P2) |
-
-**Original/Enhancement Developer:** Prem Kumar K
-
----
-
-## Document Approval
-
-**Document Prepared By:** Development Team
-**Reviewed By:** Aarthi
-**Approved By:** Aarthi
+**Document Created By:** Prem Kumar K
 **Date:** 09.22.2026
 
 ---
