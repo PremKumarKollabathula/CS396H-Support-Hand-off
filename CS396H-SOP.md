@@ -46,7 +46,7 @@ CS396H processes queued vendor export transactions (VNDEXPQ/VNDEXPH/VNDEXPD) to 
 | **3. Tell EPIC about it** | N/A - not applicable to legacy warehouses | **Notify EPIC**, per line item, that this order/item is reserved/allocated for this warehouse with the date calculated in Step 2 (an outbound override, not a date lookup) |
 | **4. Save the final date** | Written to the order's date fields as before | Written to the same order date fields - the value saved is the one calculated in Step 2, unchanged by the EPIC notification |
 | **5. If something goes wrong** | N/A - no external call is made | If EPIC doesn't acknowledge the notification successfully, the order is **put back in the queue to try again later** (it is not lost or marked as complete) |
-
+queue
 **Bottom line for support:**
 - The ship/delivery date is calculated the **same way in both flows** - vendor date, bumped up if the customer asked for later. EPIC does not calculate or hand back a date to us.
 - The only difference for Epic-enabled warehouses is an **extra outbound step**: telling EPIC about the reservation/allocation so EPIC's records match ours.
@@ -165,12 +165,12 @@ This is the shared "final date correction" step that both flows pass through bef
 
 **Find Stuck Requeued Records**
 ```sql
-SELECT * FROM VNDEXPQ WHERE VEQSTS = 'Q' ORDER BY <queue timestamp/key field>;
+SELECT * FROM VNDEXPQ WHERE VEQSTS = 'Q' ORDER BY VEQDATEADDED Desc;
 ```
 
 **Find Hard-Error Records**
 ```sql
-SELECT * FROM VNDEXPQ WHERE VEQSTS = 'E' ORDER BY <queue timestamp/key field>;
+SELECT * FROM VNDEXPQ WHERE VEQSTS = 'E' ORDER BY VEQDATEADDED Desc;
 ```
 
 **Cross-Reference with EPIC Health Monitor (CS448J)**
