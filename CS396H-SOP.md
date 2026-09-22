@@ -35,15 +35,22 @@ CS396H processes queued vendor export transactions (VNDEXPQ/VNDEXPH/VNDEXPD) to 
 - **Per-Item Correction**: Overrides using `ExtOrd.RqsDat` (customer requested date) when it is later than the vendor/EPIC-derived date, applied consistently across every line item of an order.
 - **Reliable Requeue**: Genuine retry on EPIC failure instead of silently archiving/deleting the queue record as if it succeeded.
 
-### 1.2 Key Enhancement - Revision PK-L
+### 1.2 Key Enhancement - Revision PK-L (Functional Summary)
 
-The following is the approved, current behavior of the program under revision `PK-L`:
+**In plain terms:** the program still does the same job it always did - figure out the correct ship/delivery date for each line on an order and save it. What changed is *where that date comes from* for warehouses that have gone live on Epic.
 
-1. **EDD_Override_SR (OMS-2243)**: Checks `isWarehouseEpicEnabled(Wk_House : IsWhseEnabled : EnablementMode)`. Only `EnablementMode = 'L'` (Live) is treated as Epic-enabled; blank/Compare mode is treated as `IsWhseEnabled='N'` (legacy flow). When enabled, loops `OrdItemsCsr` over `CODATAN`, builds `ItemOverridesDS`/`LineItemSeqArr`, calls `PopulateEDDTables` then `InvokeEPICEDDAPI`, and captures the result in `EDDProcResponse.ProcessStatus`.
+| Step | Legacy Flow (non-Epic / Compare-mode warehouse) | Epic Flow (Live-mode warehouse) |
+|:-----|:------------------------------------------------|:---------------------------------|
+| **1. Decide which flow applies** | Warehouse is not Epic-enabled (or is still in "Compare" testing mode) | Warehouse is confirmed Live on Epic |
+| **2. Get the ship/delivery date** | Use the date the vendor already sent on the export record | Ask the Epic EDD service for its calculated date for each item on the order |
+| **3. Handle a customer-requested date** | If the customer asked for a later date than the vendor's date, use the customer's date instead | Same rule applies - if the customer's requested date is later than the date returned, the customer's date wins |
+| **4. Save the final date** | Written to the order's date fields exactly as before | Written to the same order date fields, just sourced from Epic instead of the vendor |
+| **5. If something goes wrong** | N/A - no external call is made | If Epic doesn't respond successfully, the order is **put back in the queue to try again later** (it is not lost or marked as complete) |
 
-2. **Upd_Dates_Sr (OMS-2246)**: Uses `Wk_RqsDat` (Packed 8:0) to compare `ExtOrd.RqsDat` against `vedShpDt` **per line item** (every item of the order is checked independently). Uses `%DATE(%Char(Wk_RqsDat):*ISO0)` since `ExtOrd.RqsDat` is CCYYMMDD packed numeric.
-
-3. **Requeue handling in `Process_Rcds`**: On EPIC failure (`IsWhseEnabled='Y'` and `EDDProcResponse.ProcessStatus <> 'PASS'`), `Continue_Flg` is set to `'N'`. This ensures the outer driver requeues the record (`veqSts='Q'`) instead of archiving/deleting it. `Build_Log_Flg` is not affected by this - see Section 5.
+**Bottom line for support:**
+- Both flows land on the exact same order fields and produce the same kind of result - a corrected ship/delivery date.
+- Legacy-flow orders are unaffected by this change; they behave exactly as before.
+- Epic-flow orders add one extra step (asking Epic for the date) before that same date-correction logic runs. If that extra step fails, the order simply waits and retries - it doesn't error out silently.
 
 ---
 
@@ -83,17 +90,17 @@ graph TD
     style E fill:#FFE082,stroke:#E65100,stroke-width:2px,color:#BF360C
 ```
 
-### 2.2 Upd_Dates_Sr (OMS-2246) Detail
+### 2.2 Date-Correction Step (OMS-2246) - Functional Explanation
 
-```
-Loop CoDatNA1 by (copCusOrdN : vedItmNo)
-  Save WK_VedShpDt = vedShpDt
-  Chain(n) ExtOrd by copCusOrdN; If RqsDat > vedShpDt (as *ISO0), bump vedShpDt = RqsDat
-  If Hld_Order <> copCusOrdN (first item of order only): update CoMast (CO_RqDte/CO_MSDte)
-  Update CoDataCN / EXTORIT with corrected date
-```
+This is the shared "final date correction" step that both flows pass through before saving:
 
-This subroutine runs in **both** flows: directly when `IsWhseEnabled='N'` (legacy/non-Epic), and after a `PASS` EPIC response when `IsWhseEnabled='Y'`.
+1. Go through every line item on the order, one at a time.
+2. Start with the date determined in the previous step (vendor date for legacy, Epic date for Epic-enabled warehouses).
+3. Check if the customer requested a later date than that. If so, use the customer's requested date instead.
+4. For the first item on the order, also update the order-header-level date.
+5. Save the final date to the order's item and header records.
+
+**Why this matters to support:** this step runs the same way regardless of which flow the order came through. So if you're troubleshooting a wrong date on an order, the question to ask is "did the *upstream* date (vendor vs. Epic) look correct?" - not "did the correction step do something different." The correction step behaves identically either way.
 
 ---
 
@@ -173,13 +180,14 @@ Use the CS448J support hand-off (Section 5, Evidence Query) against `EDDREQHDR` 
 ## 7. PROGRAM DEPENDENCIES
 
 **Related/Reference Programs:**
-- `CS396A` - Original vendor export program with the reference EPIC EDD override implementation.
 - `CS448H` - EpicEnabledWarehouseList / `isWarehouseEpicEnabled` check.
+- `CS448I` - `PopulateEDDTables` and `InvokeEPICEDDAPI` called by `EDD_Override_SR`.
 - `CS448J` - EDD Service Health Monitor (see separate hand-off document) - use for confirming genuine EPIC API outages.
 
 **Key Tables:**
 - `VNDEXPQ` / `VNDEXPH` / `VNDEXPD` - Vendor export queue, header, detail.
 - `COMAST` / `CODATAN` / `EXTORIT` / `EXTORD` - Order master and item-level date fields.
+- 'AINVCTL' / 'INVDTL' / 'INVPREC' - Auto-invoice control/detail/price records.
 
 ---
 
@@ -189,7 +197,6 @@ Use the CS448J support hand-off (Section 5, Evidence Query) against `EDDREQHDR` 
 |:------|:-----|:--------|:-------------|
 | **L1** | Order Management Support | [Support email/queue] | 30 min (P2) |
 | **L2** | Nextuple EDD API Team | [Nextuple support contact] | 1 hour (P2) |
-| **L3** | IBM i Development Team | [Dev team contact] | 2 hours (P2) |
 
 **Original/Enhancement Developer:** Prem Kumar K
 
@@ -198,9 +205,9 @@ Use the CS448J support hand-off (Section 5, Evidence Query) against `EDDREQHDR` 
 ## Document Approval
 
 **Document Prepared By:** Development Team
-**Reviewed By:** [Name]
-**Approved By:** [Name]
-**Date:** [Fill in]
+**Reviewed By:** Aarthi
+**Approved By:** Aarthi
+**Date:** 09.22.2026
 
 ---
 
